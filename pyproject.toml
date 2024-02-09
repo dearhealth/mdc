@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "mdc"
-version = "1.2.2"
+version = "1.2.3a0"
 description = "A fork of https://github.com/afriemann/mdc"
 readme="README.rst"
 authors = [ "dearhealth", "Aljosha Friemann <a.friemann@automate.wtf>" ]
