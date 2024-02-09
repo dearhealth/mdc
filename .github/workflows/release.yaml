@@ -1,0 +1,77 @@
+name: release
+on:
+  push:
+    branches:
+      - dearhealth
+  workflow_dispatch: {}
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      checks: write
+    outputs: {}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Set git identity
+        run: |-
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+      - id: setup-python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - uses: snok/install-poetry@v1
+        with:
+          installer-parallel: true
+      - name: Install poetry dependencies
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction --no-root
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.DEPLOYMENT_ROLE_DEV }}
+          aws-region: us-east-1
+      - name: login codeartifact
+        run: |-
+          aws codeartifact login --tool npm --domain dh-artifacts --domain-owner ${{secrets.AWS_ACCOUNT_DEV}} --repository npm-store
+          export CA_AUTH_TOKEN=$(aws codeartifact get-authorization-token --region us-east-1 --domain dh-artifacts --domain-owner  ${{secrets.AWS_ACCOUNT_DEV}} --query authorizationToken --output text)
+          poetry config http-basic.dh_repo aws "${CA_AUTH_TOKEN}"
+          poetry config pypi-token.dh_repo "${CA_AUTH_TOKEN}"
+          poetry config repositories.dh_repo "https://dh-artifacts-915964404932.d.codeartifact.us-east-1.amazonaws.com/pypi/dh-repo/"
+      - name: bump version
+        run: |-
+          poetry version prerelease
+      - name: setup git config
+        run: |
+          # setup the username and email. I tend to use 'GitHub Actions Bot' with no email by default
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+      - name: commit
+        run: |
+          # Stage the file, commit and push
+          git add pyproject.toml
+          git commit -m "bump version"
+          git push origin dearhealth
+      - name: build
+        run: poetry build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: dist
+          path: dist
+      - name: Github Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+        run: |-
+          tar -czf dist.tar.gz dist
+          errout=$(mktemp); gh release create v$(poetry version|cut -d\  -f2) dist.tar.gz -R $GITHUB_REPOSITORY --target $GITHUB_REF 2> $errout && true; exitcode=$?; if [ $exitcode -ne 0 ] && ! grep -q "Release.tag_name already exists" $errout; then cat $errout; exit $exitcode; fi
+      - name: Publish to CodeArtifact
+        run: poetry publish -r dh_repo
